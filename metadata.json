@@ -1,0 +1,5 @@
+{
+  "name": "Autonomous EDA Agent",
+  "description": "An AI-powered agent for Exploratory Data Analysis (EDA). Upload a CSV file and ask questions to get automated insights, data profiles, and visualizations.",
+  "requestFramePermissions": []
+}
