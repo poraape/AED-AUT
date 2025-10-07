@@ -5,6 +5,9 @@ import {
 import type { PlotSpec } from '../types';
 import { ChartType } from '../types';
 import { CogIcon } from './icons/CogIcon';
+// FIX: Import the new CameraIcon for the download button.
+import { CameraIcon } from './icons/CameraIcon';
+import Spinner from './Spinner';
 
 interface ChartRendererProps {
   spec: PlotSpec;
@@ -97,6 +100,11 @@ const ChartRenderer: React.FC<ChartRendererProps> = ({ spec, chartId }) => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const settingsRef = useRef<HTMLDivElement>(null);
   const colors = PALETTES[currentPalette];
+  
+  // FIX: Add state and ref for the chart download functionality.
+  const chartContainerRef = useRef<HTMLDivElement>(null);
+  const [isDownloading, setIsDownloading] = useState(false);
+
 
   const { correctedChartType, wasCorrected } = useMemo(() => {
     if (!data || data.length === 0) {
@@ -122,6 +130,83 @@ const ChartRenderer: React.FC<ChartRendererProps> = ({ spec, chartId }) => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, []);
+
+  // FIX: Function to handle downloading the chart as a PNG.
+  const handleDownloadAsPNG = async () => {
+    if (!chartContainerRef.current) return;
+    setIsDownloading(true);
+
+    try {
+        const svgElement = chartContainerRef.current.querySelector('svg');
+        if (!svgElement) {
+            throw new Error("Elemento SVG não encontrado");
+        }
+
+        const svgClone = svgElement.cloneNode(true) as SVGSVGElement;
+        svgClone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+        
+        const styleElement = document.createElement('style');
+        styleElement.innerHTML = `
+            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
+            text {
+                font-family: 'Inter', sans-serif !important;
+                font-size: 12px !important;
+                fill: #a0a0a0 !important;
+            }
+            .recharts-legend-item-text {
+                fill: #e0e0e0 !important;
+            }
+        `;
+        svgClone.prepend(styleElement);
+
+        const svgString = new XMLSerializer().serializeToString(svgClone);
+        const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+        const url = URL.createObjectURL(svgBlob);
+
+        const pngDataUrl = await new Promise<string>((resolve, reject) => {
+            const image = new Image();
+            image.onload = () => {
+                const canvas = document.createElement('canvas');
+                const scale = 2;
+                const bounds = svgElement.getBoundingClientRect();
+                canvas.width = bounds.width * scale;
+                canvas.height = bounds.height * scale;
+                const ctx = canvas.getContext('2d');
+
+                if (ctx) {
+                    ctx.fillStyle = '#2a2a2a'; // Match gray-800 background
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.scale(scale, scale);
+                    ctx.drawImage(image, 0, 0);
+                    resolve(canvas.toDataURL('image/png'));
+                } else {
+                    reject(new Error('Não foi possível obter o contexto do canvas'));
+                }
+                URL.revokeObjectURL(url);
+            };
+            image.onerror = () => {
+                reject(new Error('Falha ao carregar a imagem SVG para conversão.'));
+                URL.revokeObjectURL(url);
+            };
+            image.src = url;
+        });
+
+        const a = document.createElement('a');
+        const safeTitle = spec.title.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+        a.download = `${safeTitle || 'grafico'}.png`;
+        a.href = pngDataUrl;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+
+    } catch (error) {
+        console.error("Falha ao baixar o gráfico:", error);
+        alert("Desculpe, ocorreu um erro ao salvar o gráfico.");
+    } finally {
+        setIsDownloading(false);
+    }
+  };
+
 
   const renderChart = () => {
     switch (correctedChartType) {
@@ -190,58 +275,70 @@ const ChartRenderer: React.FC<ChartRendererProps> = ({ spec, chartId }) => {
   };
 
   return (
-    <div id={chartId}>
+    <div id={chartId} ref={chartContainerRef}>
        <div className="flex justify-between items-start">
         <div className="flex-1 pr-4">
             <h4 className="font-semibold text-md text-gray-200">{title}</h4>
             <p className="text-xs text-gray-400 mb-4">{description}</p>
         </div>
-        <div className="relative flex-shrink-0" ref={settingsRef}>
+        {/* FIX: Container for action buttons (download, settings) */}
+        <div className="flex items-center space-x-2 flex-shrink-0">
             <button
-                onClick={() => setIsSettingsOpen(!isSettingsOpen)}
-                className="p-1 text-gray-400 hover:text-white transition-colors rounded-full focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-indigo-500"
-                aria-label="Configurações do Gráfico"
+                onClick={handleDownloadAsPNG}
+                disabled={isDownloading}
+                className="p-1 text-gray-400 hover:text-white transition-colors rounded-full focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-indigo-500 disabled:opacity-50"
+                aria-label="Salvar gráfico como imagem"
+                title="Salvar como imagem"
             >
-                <CogIcon className="w-5 h-5" />
+                {isDownloading ? <Spinner /> : <CameraIcon className="w-5 h-5" />}
             </button>
-            {isSettingsOpen && (
-                <div className="absolute right-0 mt-2 w-48 bg-gray-700 border border-gray-600 rounded-md shadow-lg z-10 p-3 animate-fade-in-sm">
-                    <div className="space-y-3">
-                        {/* Tooltip Toggle */}
-                        <label className="flex items-center justify-between text-sm text-gray-200 cursor-pointer">
-                            <span>Mostrar Dicas</span>
-                            <input
-                                type="checkbox"
-                                checked={showTooltip}
-                                onChange={() => setShowTooltip(!showTooltip)}
-                                className="sr-only peer"
-                            />
-                            <div className="relative w-9 h-5 bg-gray-600 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-500"></div>
-                        </label>
-                        
-                        {/* Color Scheme Selector */}
-                        <div>
-                            <span className="block text-sm font-semibold text-gray-200 mb-2">Paleta de Cores</span>
-                            <div className="flex flex-col space-y-2">
-                                {Object.entries(PALETTES).map(([paletteName, paletteColors]) => (
-                                    <button 
-                                        key={paletteName} 
-                                        onClick={() => { setCurrentPalette(paletteName as PaletteName); setIsSettingsOpen(false); }}
-                                        className={`w-full h-6 rounded flex items-center p-0.5 border-2 ${currentPalette === paletteName ? 'border-indigo-400' : 'border-transparent hover:border-gray-500'}`}
-                                        aria-label={`Selecionar paleta de cores ${paletteName}`}
-                                    >
-                                        <div className="flex w-full h-full rounded-sm overflow-hidden">
-                                            {paletteColors.slice(0, 5).map(color => (
-                                                <span key={color} className="w-1/5 h-full" style={{ backgroundColor: color }}></span>
-                                            ))}
-                                        </div>
-                                    </button>
-                                ))}
+            <div className="relative" ref={settingsRef}>
+                <button
+                    onClick={() => setIsSettingsOpen(!isSettingsOpen)}
+                    className="p-1 text-gray-400 hover:text-white transition-colors rounded-full focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-indigo-500"
+                    aria-label="Configurações do Gráfico"
+                >
+                    <CogIcon className="w-5 h-5" />
+                </button>
+                {isSettingsOpen && (
+                    <div className="absolute right-0 mt-2 w-48 bg-gray-700 border border-gray-600 rounded-md shadow-lg z-10 p-3 animate-fade-in-sm">
+                        <div className="space-y-3">
+                            {/* Tooltip Toggle */}
+                            <label className="flex items-center justify-between text-sm text-gray-200 cursor-pointer">
+                                <span>Mostrar Dicas</span>
+                                <input
+                                    type="checkbox"
+                                    checked={showTooltip}
+                                    onChange={() => setShowTooltip(!showTooltip)}
+                                    className="sr-only peer"
+                                />
+                                <div className="relative w-9 h-5 bg-gray-600 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-500"></div>
+                            </label>
+                            
+                            {/* Color Scheme Selector */}
+                            <div>
+                                <span className="block text-sm font-semibold text-gray-200 mb-2">Paleta de Cores</span>
+                                <div className="flex flex-col space-y-2">
+                                    {Object.entries(PALETTES).map(([paletteName, paletteColors]) => (
+                                        <button 
+                                            key={paletteName} 
+                                            onClick={() => { setCurrentPalette(paletteName as PaletteName); setIsSettingsOpen(false); }}
+                                            className={`w-full h-6 rounded flex items-center p-0.5 border-2 ${currentPalette === paletteName ? 'border-indigo-400' : 'border-transparent hover:border-gray-500'}`}
+                                            aria-label={`Selecionar paleta de cores ${paletteName}`}
+                                        >
+                                            <div className="flex w-full h-full rounded-sm overflow-hidden">
+                                                {paletteColors.slice(0, 5).map(color => (
+                                                    <span key={color} className="w-1/5 h-full" style={{ backgroundColor: color }}></span>
+                                                ))}
+                                            </div>
+                                        </button>
+                                    ))}
+                                </div>
                             </div>
                         </div>
                     </div>
-                </div>
-            )}
+                )}
+            </div>
         </div>
       </div>
       {wasCorrected && (

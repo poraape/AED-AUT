@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useEffect } from 'react';
 import type { ChatMessage, AnalysisResult } from '../types';
 import { getChatResponse } from '../services/geminiService';
@@ -219,6 +220,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ initialAnalysis, file, on
       
       let summaryRendered = false;
 
+      // Use a for...of loop to handle async operations inside
       for (const msg of messages) {
         if (msg.isTyping) continue;
 
@@ -246,7 +248,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ initialAnalysis, file, on
           // Findings
           if (result.findings && result.findings.length > 0) {
             htmlString += `<h3>Principais Achados da Análise</h3>`;
-            result.findings.forEach((finding, index) => {
+            for (const [index, finding] of result.findings.entries()) {
               htmlString += `<div class="finding-container">`;
               htmlString += `<p>${finding.insight}</p>`;
 
@@ -255,46 +257,71 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ initialAnalysis, file, on
                 const chartElement = document.getElementById(chartId);
                 const svgElement = chartElement?.querySelector('svg');
                 
-                if (svgElement) {
-                  // Clone the node to avoid modifying the live DOM
-                  const svgClone = svgElement.cloneNode(true) as SVGSVGElement;
-                  
-                  // Ensure the SVG has the correct XML namespace for proper rendering
-                  svgClone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+                if (svgElement && svgElement.getBoundingClientRect().width > 0) {
+                   try {
+                    const svgClone = svgElement.cloneNode(true) as SVGSVGElement;
+                    svgClone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
 
-                  // Create a style block to embed directly into the SVG.
-                  // This ensures that styles applied via CSS classes (like text color and font) are preserved.
-                  const styleElement = document.createElement('style');
-                  styleElement.innerHTML = `
-                    /* Import the font used in the application */
-                    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
-                    
-                    /* Apply base styles to all text within the SVG */
-                    text {
-                      font-family: 'Inter', sans-serif;
-                      font-size: 12px;
-                      fill: #a0a0a0; /* Replicate --secondary-text color */
-                    }
+                    const styleElement = document.createElement('style');
+                    styleElement.innerHTML = `
+                      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
+                      text {
+                        font-family: 'Inter', sans-serif;
+                        font-size: 12px;
+                        fill: #a0a0a0;
+                      }
+                      .recharts-legend-item-text {
+                        fill: #e0e0e0 !important;
+                      }
+                    `;
+                    svgClone.prepend(styleElement);
 
-                    /* Style for legend text */
-                    .recharts-legend-item-text {
-                      fill: #e0e0e0 !important; /* Replicate --primary-text for better readability */
-                    }
-                  `;
-                  svgClone.prepend(styleElement);
+                    const svgString = new XMLSerializer().serializeToString(svgClone);
+                    const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+                    const url = URL.createObjectURL(svgBlob);
 
-                  const serializer = new XMLSerializer();
-                  const svgString = serializer.serializeToString(svgClone);
-                  
-                  htmlString += `<div class="chart-container"><h4>${finding.plot.title}</h4><p>${finding.plot.description}</p>`;
-                  htmlString += svgString;
-                  htmlString += `</div>`;
+                    const pngDataUrl = await new Promise<string>((resolve, reject) => {
+                      const image = new Image();
+                      image.onload = () => {
+                        const canvas = document.createElement('canvas');
+                        const scale = 2; // Render at 2x for better resolution
+                        const bounds = svgElement.getBoundingClientRect();
+                        canvas.width = bounds.width * scale;
+                        canvas.height = bounds.height * scale;
+                        const ctx = canvas.getContext('2d');
+
+                        if (ctx) {
+                          ctx.fillStyle = '#121212'; // --bg-color
+                          ctx.fillRect(0, 0, canvas.width, canvas.height);
+                          ctx.scale(scale, scale);
+                          ctx.drawImage(image, 0, 0);
+                          resolve(canvas.toDataURL('image/png'));
+                        } else {
+                          reject(new Error('Could not get canvas context'));
+                        }
+                        URL.revokeObjectURL(url);
+                      };
+                      image.onerror = () => {
+                        reject(new Error('Failed to load SVG image for conversion.'));
+                        URL.revokeObjectURL(url);
+                      };
+                      image.src = url;
+                    });
+
+                    htmlString += `<div class="chart-container"><h4>${finding.plot.title}</h4><p>${finding.plot.description}</p>`;
+                    htmlString += `<img src="${pngDataUrl}" alt="${finding.plot.title}" style="max-width: 100%; height: auto; border-radius: 8px;" />`;
+                    htmlString += `</div>`;
+
+                  } catch (conversionError) {
+                    console.error("Error converting SVG to PNG:", conversionError);
+                    htmlString += `<div class="chart-container"><p style="color: #ffcccc;">Erro: Falha ao converter o gráfico para uma imagem.</p></div>`;
+                  }
                 } else {
-                   htmlString += `<div class="chart-container"><p style="color: #ffcccc;">Erro: O gráfico com ID ${chartId} não foi encontrado no DOM. Pode não ter sido renderizado a tempo para a exportação.</p></div>`;
+                   htmlString += `<div class="chart-container"><p style="color: #ffcccc;">Erro: O gráfico com ID ${chartId} não foi encontrado ou não foi renderizado a tempo para a exportação.</p></div>`;
                 }
               }
               htmlString += `</div>`; // close finding-container
-            });
+            }
           }
           htmlString += `</div>`; // close analysis
         }
