@@ -44,6 +44,7 @@ export interface Finding {
 export interface AnalysisResult {
   inspection_summary: InspectionSummary;
   findings: Finding[];
+  suggested_followups?: string[];
 }
 
 // FIX: Defining the content of a chat message.

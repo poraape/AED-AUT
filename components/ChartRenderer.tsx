@@ -5,13 +5,13 @@ import {
 import type { PlotSpec } from '../types';
 import { ChartType } from '../types';
 import { CogIcon } from './icons/CogIcon';
-// FIX: Import the new CameraIcon for the download button.
 import { CameraIcon } from './icons/CameraIcon';
 import Spinner from './Spinner';
 
 interface ChartRendererProps {
   spec: PlotSpec;
   chartId: string;
+  onDrillDown?: (chartTitle: string, dataPoint: Record<string, any>) => void;
 }
 
 // Define color palettes
@@ -91,7 +91,7 @@ const determineAppropriateChartType = (
 };
 
 
-const ChartRenderer: React.FC<ChartRendererProps> = ({ spec, chartId }) => {
+const ChartRenderer: React.FC<ChartRendererProps> = ({ spec, chartId, onDrillDown }) => {
   const { title, description, data, data_keys } = spec;
 
   // State for customizations
@@ -101,9 +101,11 @@ const ChartRenderer: React.FC<ChartRendererProps> = ({ spec, chartId }) => {
   const settingsRef = useRef<HTMLDivElement>(null);
   const colors = PALETTES[currentPalette];
   
-  // FIX: Add state and ref for the chart download functionality.
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const [isDownloading, setIsDownloading] = useState(false);
+  
+  const [isDownloadMenuOpen, setIsDownloadMenuOpen] = useState(false);
+  const downloadMenuRef = useRef<HTMLDivElement>(null);
 
 
   const { correctedChartType, wasCorrected } = useMemo(() => {
@@ -118,11 +120,13 @@ const ChartRenderer: React.FC<ChartRendererProps> = ({ spec, chartId }) => {
     };
   }, [spec, data]);
 
-  // Close settings panel when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (settingsRef.current && !settingsRef.current.contains(event.target as Node)) {
         setIsSettingsOpen(false);
+      }
+      if (downloadMenuRef.current && !downloadMenuRef.current.contains(event.target as Node)) {
+        setIsDownloadMenuOpen(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -131,35 +135,47 @@ const ChartRenderer: React.FC<ChartRendererProps> = ({ spec, chartId }) => {
     };
   }, []);
 
-  // FIX: Function to handle downloading the chart as a PNG.
+  const getStyledSvgString = async (): Promise<string | null> => {
+    if (!chartContainerRef.current) return null;
+    
+    const svgElement = chartContainerRef.current.querySelector('svg');
+    if (!svgElement) {
+        throw new Error("Elemento SVG não encontrado");
+    }
+
+    const svgClone = svgElement.cloneNode(true) as SVGSVGElement;
+    svgClone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    
+    const styleElement = document.createElement('style');
+    styleElement.innerHTML = `
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
+        text, .recharts-text {
+            font-family: 'Inter', sans-serif !important;
+            font-size: 12px !important;
+            fill: #c9c9c9 !important; /* gray-300 */
+        }
+        .recharts-legend-item-text {
+            fill: #e9e9e9 !important; /* gray-200 */
+        }
+        .recharts-tooltip-label, .recharts-tooltip-item {
+             font-family: 'Inter', sans-serif !important;
+             color: #e0e0e0 !important;
+        }
+    `;
+    svgClone.prepend(styleElement);
+
+    return new XMLSerializer().serializeToString(svgClone);
+  };
+
   const handleDownloadAsPNG = async () => {
+    setIsDownloadMenuOpen(false);
     if (!chartContainerRef.current) return;
     setIsDownloading(true);
 
     try {
-        const svgElement = chartContainerRef.current.querySelector('svg');
-        if (!svgElement) {
-            throw new Error("Elemento SVG não encontrado");
-        }
+        const svgString = await getStyledSvgString();
+        if (!svgString) throw new Error("Não foi possível gerar a string SVG.");
 
-        const svgClone = svgElement.cloneNode(true) as SVGSVGElement;
-        svgClone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-        
-        const styleElement = document.createElement('style');
-        styleElement.innerHTML = `
-            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
-            text {
-                font-family: 'Inter', sans-serif !important;
-                font-size: 12px !important;
-                fill: #a0a0a0 !important;
-            }
-            .recharts-legend-item-text {
-                fill: #e0e0e0 !important;
-            }
-        `;
-        svgClone.prepend(styleElement);
-
-        const svgString = new XMLSerializer().serializeToString(svgClone);
         const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
         const url = URL.createObjectURL(svgBlob);
 
@@ -168,7 +184,7 @@ const ChartRenderer: React.FC<ChartRendererProps> = ({ spec, chartId }) => {
             image.onload = () => {
                 const canvas = document.createElement('canvas');
                 const scale = 2;
-                const bounds = svgElement.getBoundingClientRect();
+                const bounds = chartContainerRef.current!.querySelector('svg')!.getBoundingClientRect();
                 canvas.width = bounds.width * scale;
                 canvas.height = bounds.height * scale;
                 const ctx = canvas.getContext('2d');
@@ -184,7 +200,8 @@ const ChartRenderer: React.FC<ChartRendererProps> = ({ spec, chartId }) => {
                 }
                 URL.revokeObjectURL(url);
             };
-            image.onerror = () => {
+            image.onerror = (err) => {
+                console.error("Image loading error:", err);
                 reject(new Error('Falha ao carregar a imagem SVG para conversão.'));
                 URL.revokeObjectURL(url);
             };
@@ -200,13 +217,47 @@ const ChartRenderer: React.FC<ChartRendererProps> = ({ spec, chartId }) => {
         document.body.removeChild(a);
 
     } catch (error) {
-        console.error("Falha ao baixar o gráfico:", error);
-        alert("Desculpe, ocorreu um erro ao salvar o gráfico.");
+        console.error("Falha ao baixar o gráfico como PNG:", error);
+        alert("Desculpe, ocorreu um erro ao salvar o gráfico como PNG.");
     } finally {
         setIsDownloading(false);
     }
   };
 
+  const handleDownloadAsSVG = async () => {
+    setIsDownloadMenuOpen(false);
+    if (!chartContainerRef.current) return;
+    setIsDownloading(true);
+
+    try {
+        const svgString = await getStyledSvgString();
+        if (!svgString) throw new Error("Não foi possível gerar a string SVG.");
+
+        const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+        const url = URL.createObjectURL(svgBlob);
+
+        const a = document.createElement('a');
+        const safeTitle = spec.title.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+        a.download = `${safeTitle || 'grafico'}.svg`;
+        a.href = url;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+    } catch (error) {
+        console.error("Falha ao baixar o gráfico como SVG:", error);
+        alert("Desculpe, ocorreu um erro ao salvar o gráfico como SVG.");
+    } finally {
+        setIsDownloading(false);
+    }
+  };
+
+  const handleBarClick = (data: any) => {
+    if (onDrillDown && data && data.payload) {
+        onDrillDown(title, data.payload);
+    }
+  };
 
   const renderChart = () => {
     switch (correctedChartType) {
@@ -219,7 +270,13 @@ const ChartRenderer: React.FC<ChartRendererProps> = ({ spec, chartId }) => {
             {showTooltip && <Tooltip contentStyle={{ backgroundColor: '#2a2a2a', border: '1px solid #4a4a4a' }} />}
             <Legend />
             {data_keys.y.map((yKey, index) => (
-                 <Bar key={yKey} dataKey={yKey} fill={colors[index % colors.length]} />
+                 <Bar 
+                    key={yKey} 
+                    dataKey={yKey} 
+                    fill={colors[index % colors.length]} 
+                    onClick={handleBarClick}
+                    cursor={onDrillDown ? "pointer" : "default"}
+                 />
             ))}
           </BarChart>
         );
@@ -281,17 +338,34 @@ const ChartRenderer: React.FC<ChartRendererProps> = ({ spec, chartId }) => {
             <h4 className="font-semibold text-md text-gray-200">{title}</h4>
             <p className="text-xs text-gray-400 mb-4">{description}</p>
         </div>
-        {/* FIX: Container for action buttons (download, settings) */}
         <div className="flex items-center space-x-2 flex-shrink-0">
-            <button
-                onClick={handleDownloadAsPNG}
-                disabled={isDownloading}
-                className="p-1 text-gray-400 hover:text-white transition-colors rounded-full focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-indigo-500 disabled:opacity-50"
-                aria-label="Salvar gráfico como imagem"
-                title="Salvar como imagem"
-            >
-                {isDownloading ? <Spinner /> : <CameraIcon className="w-5 h-5" />}
-            </button>
+            <div className="relative" ref={downloadMenuRef}>
+                <button
+                    onClick={() => setIsDownloadMenuOpen(!isDownloadMenuOpen)}
+                    disabled={isDownloading}
+                    className="p-1 text-gray-400 hover:text-white transition-colors rounded-full focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-indigo-500 disabled:opacity-50"
+                    aria-label="Salvar gráfico"
+                    title="Salvar gráfico"
+                >
+                    {isDownloading ? <Spinner /> : <CameraIcon className="w-5 h-5" />}
+                </button>
+                {isDownloadMenuOpen && (
+                    <div className="absolute right-0 mt-2 w-48 bg-gray-700 border border-gray-600 rounded-md shadow-lg z-10 animate-fade-in-sm">
+                        <ul className="py-1">
+                           <li>
+                               <button onClick={handleDownloadAsPNG} className="w-full text-left px-4 py-2 text-sm text-gray-200 hover:bg-gray-600">
+                                   Salvar como PNG
+                               </button>
+                           </li>
+                           <li>
+                               <button onClick={handleDownloadAsSVG} className="w-full text-left px-4 py-2 text-sm text-gray-200 hover:bg-gray-600">
+                                   Salvar como SVG
+                               </button>
+                           </li>
+                        </ul>
+                    </div>
+                )}
+            </div>
             <div className="relative" ref={settingsRef}>
                 <button
                     onClick={() => setIsSettingsOpen(!isSettingsOpen)}
@@ -303,7 +377,6 @@ const ChartRenderer: React.FC<ChartRendererProps> = ({ spec, chartId }) => {
                 {isSettingsOpen && (
                     <div className="absolute right-0 mt-2 w-48 bg-gray-700 border border-gray-600 rounded-md shadow-lg z-10 p-3 animate-fade-in-sm">
                         <div className="space-y-3">
-                            {/* Tooltip Toggle */}
                             <label className="flex items-center justify-between text-sm text-gray-200 cursor-pointer">
                                 <span>Mostrar Dicas</span>
                                 <input
@@ -315,7 +388,6 @@ const ChartRenderer: React.FC<ChartRendererProps> = ({ spec, chartId }) => {
                                 <div className="relative w-9 h-5 bg-gray-600 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-500"></div>
                             </label>
                             
-                            {/* Color Scheme Selector */}
                             <div>
                                 <span className="block text-sm font-semibold text-gray-200 mb-2">Paleta de Cores</span>
                                 <div className="flex flex-col space-y-2">

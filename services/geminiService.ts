@@ -140,6 +140,11 @@ const analysisResultSchema = {
                 required: ["insight"]
             }
         },
+        suggested_followups: {
+            type: Type.ARRAY,
+            description: "A list of 2-3 relevant follow-up questions a user might ask to dig deeper into these findings.",
+            items: { type: Type.STRING }
+        }
     },
     required: ['inspection_summary', 'findings'],
 };
@@ -161,6 +166,18 @@ const preAnalysisResultSchema = {
     required: ['summary', 'suggestedQuestions'],
 };
 
+// Schema for the conversation summary
+const summarySchema = {
+    type: Type.OBJECT,
+    properties: {
+        summary: {
+            type: Type.STRING,
+            description: "A concise summary of the conversation, preserving key data insights, entities, and user intents."
+        }
+    },
+    required: ['summary'],
+};
+
 
 /**
  * Reads a File object and returns its content as a string.
@@ -177,27 +194,36 @@ const fileToText = (file: File): Promise<string> => {
 /**
  * Generates a prompt for the full analysis.
  */
-const generatePrompt = (csvContent: string, userPrompt: string, history?: string): string => {
+const generatePrompt = (csvContent: string, userPrompt: string, history?: string, summary?: string): string => {
+    const summarySection = summary ? `
+      ---
+      **RESUMO DA CONVERSA ATÉ AGORA (Use este como o contexto principal de longo prazo):**
+      ${summary}
+      ---
+    ` : '';
+    
     const historySection = history ? `
       ---
-      **CONTEXTO DA CONVERSA ANTERIOR (Use para contexto, mas foque na nova solicitação):**
+      **HISTÓRICO RECENTE DA CONVERSA (Use para entender o contexto imediato):**
       ${history}
       ---
     ` : '';
     
     return `
-      **Sua Persona: Contadora de Histórias de Dados (Data Storyteller)**
-      Você é uma especialista em dados de elite. Sua missão não é apenas analisar, mas encontrar a *narrativa* mais convincente e impactante nos dados que responda diretamente à pergunta do usuário. Quantifique suas descobertas sempre que possível. Vá além do óbvio.
+      **Sua Persona: Contadora de Histórias de Dados (Data Storyteller) de Elite**
+      Você é uma analista de dados sênior com um talento especial para transformar números brutos em narrativas de negócios convincentes. Sua missão é ir além da análise superficial, descobrindo os insights acionáveis que impulsionam decisões estratégicas. Quantifique tudo e sempre explique o "porquê" por trás dos dados.
 
       **Idioma de Saída:** Todo o texto gerado DEVE ser em português do Brasil.
 
       **Processo de Análise (Seu Processo de Pensamento):**
-      1.  **Formule uma Hipótese:** Com base na pergunta do usuário, qual é a sua hipótese inicial? (Ex: "Minha hipótese é que as campanhas de marketing em redes sociais têm um ROI maior do que as de e-mail.")
-      2.  **Busque Evidências:** Analise o CONJUNTO DE DADOS COMPLETO para encontrar evidências que suportem ou refutem sua hipótese. Procure por correlações, anomalias, tendências e segmentações.
-      3.  **Construa a Narrativa:** Apresente suas conclusões como "achados". Cada "achado" deve ser uma peça da história. Comece com a conclusão principal e depois forneça os detalhes.
-      4.  **Explique o "Porquê":** Para cada achado, explique *por que* ele é significativo. Qual é a implicação de negócio? (Ex: "A queda de 20% nas vendas no Produto Y, apesar do aumento do tráfego, sugere um problema de precificação ou usabilidade na página do produto.")
-      5.  **Visualize a Evidência:** Para cada achado textual, se uma visualização puder provar seu ponto de forma mais eficaz, crie um gráfico. O gráfico deve ser a evidência visual direta do seu insight. O título e a descrição do gráfico devem reforçar a conclusão do achado.
+      1.  **Hipótese Orientada à Ação:** Com base na pergunta do usuário, formule uma hipótese de negócio. (Ex: "Acredito que os clientes que compram o Produto A têm uma probabilidade 3x maior de se tornarem clientes recorrentes.")
+      2.  **Investigação Profunda:** Analise o CONJUNTO DE DADOS COMPLETO. Procure por correlações, anomalias, tendências e segmentações que confirmem ou refutem sua hipótese. Destaque ativamente quaisquer outliers ou padrões inesperados que possam indicar um risco ou uma oportunidade.
+      3.  **Construção da Narrativa:** Apresente suas conclusões como "achados". Cada achado é um capítulo da história. Comece com a conclusão mais impactante. (Ex: "O principal motor de receita não são os novos clientes, mas sim um pequeno grupo de clientes fiéis com um LTV 500% maior que a média.")
+      4.  **Explique a Relevância (O "E Daí?"):** Para cada achado, responda à pergunta "E daí?". Qual é a implicação de negócio? (Ex: "A descoberta de que 80% das vendas vêm de 20% dos clientes sugere que uma estratégia de marketing focada na retenção e em programas de fidelidade pode ter um ROI significativamente maior do que a aquisição de novos clientes.")
+      5.  **Visualização como Evidência:** Se um gráfico puder provar seu ponto de forma irrefutável, crie um. O título do gráfico deve ser a própria conclusão. (Ex: "Gráfico de Pareto: 80% da Receita Concentrada em 20% dos Clientes").
+      6.  **Recomendações Estratégicas:** Com base em sua análise, gere 2-3 perguntas de acompanhamento que levem a decisões de negócios. (Ex: "Quais são as características demográficas comuns desses 20% de clientes de alto valor?" ou "Podemos criar uma campanha de marketing direcionada para clientes com perfis semelhantes?").
 
+      ${summarySection}
       ${historySection}
       
       **Amostra de Dados CSV (primeiras 50 linhas apenas para contexto estrutural):**
@@ -209,7 +235,7 @@ const generatePrompt = (csvContent: string, userPrompt: string, history?: string
       "${userPrompt}"
       
       **Sua Tarefa:**
-      Execute seu processo de análise para responder à nova solicitação do usuário. Gere um perfil dos dados e uma lista de "achados" coerentes.
+      Execute seu processo de análise para responder à nova solicitação do usuário. Gere um perfil dos dados, uma lista de "achados" coerentes e as perguntas de acompanhamento.
 
       **REGRAS CRÍTICAS DE SAÍDA JSON:**
       1.  Responda **estritamente** no formato JSON definido pelo esquema. NENHUM texto fora do objeto JSON principal.
@@ -218,6 +244,7 @@ const generatePrompt = (csvContent: string, userPrompt: string, history?: string
       4.  **Se você gerar um 'plot', ele DEVE corresponder diretamente ao 'insight' que o acompanha.**
       5.  Para 'plot.data', o primeiro array interno é o cabeçalho. Todos os valores das células DEVEM ser strings. Ex: [["Mês", "Vendas"], ["Jan", "1500"], ["Fev", "1800"]].
       6.  Para 'plot.data_keys.y', **sempre** use um array de strings, mesmo com uma única série. Ex: \`"y": ["Vendas"]\`.
+      7.  Inclua a chave opcional 'suggested_followups' com um array de 2-3 perguntas de acompanhamento relevantes, se aplicável.
     `;
 };
 
@@ -240,6 +267,51 @@ const generatePreAnalysisPrompt = (csvContent: string): string => {
       2.  **Perguntas Estratégicas:** Gere de 3 a 4 perguntas estratégicas e perspicazes que um analista de negócios ou pesquisador faria. Essas perguntas devem ir além de consultas simples e sugerir potenciais caminhos para análises valiosas. Por exemplo, em vez de "Qual é a venda média?", sugira "Qual segmento de cliente tem o maior valor vitalício e quais são seus padrões de compra comuns?".
       3.  **Saída JSON Estrita:** Responda **estritamente** no formato JSON definido pelo esquema fornecido. Não inclua nenhum texto, formatação markdown ou blocos de código fora do objeto JSON principal.
     `;
+};
+
+const generateSummaryPrompt = (history: string): string => {
+    return `
+      **Sua Tarefa:** Você é um Agente de Resumo. Seu trabalho é criar um resumo conciso da seguinte conversa de análise de dados.
+      
+      **Instruções:**
+      1.  Extraia os principais insights, achados e conclusões que foram discutidos.
+      2.  Mencione quaisquer pontos de dados ou métricas específicas que foram importantes.
+      3.  Capture o fio principal da investigação do usuário.
+      4.  O resultado deve ser um parágrafo denso e rico em informações.
+      5.  Responda APENAS com o objeto JSON conforme definido pelo esquema. Nenhum outro texto.
+      
+      **Conversa para Resumir:**
+      ---
+      ${history}
+      ---
+    `;
+};
+
+/**
+ * Summarizes a conversation history.
+ */
+export const summarizeConversation = async (history: string): Promise<string> => {
+    const prompt = generateSummaryPrompt(history);
+    try {
+        const response = await callApiWithRetry(() => 
+            ai.models.generateContent({
+                model: 'gemini-2.5-flash',
+                contents: prompt,
+                config: {
+                    responseMimeType: "application/json",
+                    responseSchema: summarySchema,
+                    temperature: 0.0,
+                }
+            })
+        );
+        const jsonText = (response as GenerateContentResponse).text.trim();
+        const result = JSON.parse(jsonText);
+        return result.summary || "";
+
+    } catch (error) {
+        console.error("Error summarizing conversation:", error);
+        return ""; // Return empty string on failure to not crash the app
+    }
 };
 
 
@@ -373,10 +445,43 @@ export const performInitialAnalysis = async (file: File, question: string): Prom
 };
 
 /**
- * Handles follow-up questions in the chat, using conversation history for context.
+ * Handles follow-up questions in the chat, using conversation history for context and streaming the response.
  */
-export const getChatResponse = async (file: File, history: string, userMessage: string): Promise<AnalysisResult> => {
+export const getChatResponseStream = async (file: File, history: string, userMessage: string, summary: string): Promise<AsyncGenerator<string>> => {
     const csvContent = await fileToText(file);
-    const prompt = generatePrompt(csvContent, userMessage, history);
-    return callGemini(prompt);
+    const prompt = generatePrompt(csvContent, userMessage, history, summary);
+    
+    try {
+      const responseStream = await callApiWithRetry(() =>
+        ai.models.generateContentStream({
+            model: 'gemini-2.5-flash',
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: analysisResultSchema,
+                temperature: 0.1,
+            }
+        })
+      );
+      
+      // Return the async generator directly
+      return (async function*() {
+        // FIX: Cast responseStream to an async generator of GenerateContentResponse to fix
+        // an issue where its type was inferred as 'unknown', causing an iteration error.
+        for await (const chunk of responseStream as AsyncGenerator<GenerateContentResponse>) {
+          yield chunk.text;
+        }
+      })();
+
+    } catch (error) {
+        console.error("Error calling Gemini API Stream:", error);
+        const errorMessage = error instanceof Error ? error.message : "An unknown error occurred.";
+        if (errorMessage.includes('API key not valid')) {
+            throw new GeminiApiError('A chave da API fornecida é inválida. Verifique sua configuração.');
+        }
+        if (errorMessage.includes('quota')) {
+            throw new GeminiApiError('A cota de uso da API foi excedida. Por favor, tente novamente mais tarde.');
+        }
+        throw new GeminiApiError(`Falha ao obter análise do Gemini. Causa: ${errorMessage}`);
+    }
 };

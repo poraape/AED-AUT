@@ -8,9 +8,11 @@ import { WarningIcon } from './icons/WarningIcon';
 interface MessageProps {
   message: ChatMessage;
   showSummary?: boolean;
+  onSuggestionClick?: (question: string) => void;
+  onDrillDown?: (chartTitle: string, dataPoint: Record<string, any>) => void;
 }
 
-const Message: React.FC<MessageProps> = ({ message, showSummary = false }) => {
+const Message: React.FC<MessageProps> = ({ message, showSummary = false, onSuggestionClick, onDrillDown }) => {
   const isAgent = message.sender === 'agent';
   const isError = message.isError;
   
@@ -38,10 +40,10 @@ const Message: React.FC<MessageProps> = ({ message, showSummary = false }) => {
           ? isError ? 'bg-gray-700 border border-red-500/50' : 'bg-gray-700'
           : 'bg-blue-600 text-white'
       }`}>
-        {message.isTyping ? (
+        {message.isTyping && !message.content.analysisResult ? (
           <div className="flex items-center space-x-2">
             <Spinner />
-            <span>Analyzing...</span>
+            <span>Analisando...</span>
           </div>
         ) : (
           <>
@@ -54,6 +56,8 @@ const Message: React.FC<MessageProps> = ({ message, showSummary = false }) => {
                   result={message.content.analysisResult} 
                   messageId={message.id} 
                   showSummary={showSummary} 
+                  onQuestionSelect={onSuggestionClick}
+                  onDrillDown={onDrillDown}
                 />
               </div>
             )}
