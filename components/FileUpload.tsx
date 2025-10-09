@@ -1,3 +1,4 @@
+
 import React, { useState, useCallback } from 'react';
 
 interface FileUploadProps {
@@ -52,8 +53,8 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect }) => {
 
   return (
     <div className="w-full max-w-xl mx-auto">
-        <h2 className="text-2xl font-semibold text-center text-gray-100 mb-4">Carregue seu Conjunto de Dados</h2>
-        <p className="text-center text-gray-400 mb-8">Envie um arquivo CSV ou um ZIP (contendo um CSV) para iniciar a análise.</p>
+        <h2 className="text-2xl font-semibold text-center text-gray-100 mb-4">Inicie sua Análise de Dados</h2>
+        <p className="text-center text-gray-400 mb-8">Envie um arquivo CSV ou um ZIP (contendo um CSV) para começar.</p>
       <div
         onDrop={handleDrop}
         onDragOver={handleDragOver}
@@ -71,9 +72,9 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect }) => {
         <label htmlFor="file-upload" className="flex flex-col items-center cursor-pointer">
           <svg className="w-12 h-12 text-gray-500 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
           <p className="text-gray-400">
-            <span className="font-semibold text-indigo-400">Clique para enviar</span> ou arraste e solte
+            <span className="font-semibold text-indigo-400">Clique para carregar</span> ou arraste e solte
           </p>
-          <p className="text-xs text-gray-500 mt-1">Arquivos CSV ou ZIP de até 200MB</p>
+          <p className="text-xs text-gray-500 mt-1">Suporta arquivos .csv e .zip</p>
           {fileName && !uploadError && <p className="text-sm text-green-400 mt-4">Arquivo selecionado: {fileName}</p>}
         </label>
       </div>

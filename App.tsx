@@ -1,185 +1,195 @@
-
-import React, { useState } from 'react';
-import JSZip from 'jszip';
-import type { AnalysisResult, PreAnalysisResult } from './types';
+// FIX: Implement the main App component to manage state and application flow.
+import React, { useState, useEffect, useCallback } from 'react';
+import type { ChatMessage, DataProfile, PreAnalysisResult } from './types';
 import Header from './components/Header';
 import PreAnalysisView from './components/PreAnalysisView';
 import ChatInterface from './components/ChatInterface';
 import LoadingIndicator from './components/LoadingIndicator';
 import ErrorDisplay from './components/ErrorDisplay';
-// FIX: Adding performPreAnalysis and updating performInitialAnalysis call signature
-import { performInitialAnalysis, performPreAnalysis } from './services/geminiService';
-import { GeminiApiError, DataParsingError } from './services/errors';
+import { getPreAnalysis, getAnalysis } from './services/geminiService';
+import { profileData } from './services/dataProfiler';
+import { getChatHistory, saveChatHistory, removeChatHistory } from './services/dbService';
 
-type AppState =
-  | 'pre-analysis'
-  | 'loading-pre-analysis'
-  | 'showing_suggestions'
-  | 'loading-analysis'
-  | 'chat'
-  | 'error';
-  
-interface AppError {
-  title: string;
-  message: string;
-}
+type AppState = 'PRE_ANALYSIS' | 'LOADING' | 'CHAT' | 'ERROR';
 
-function App() {
-  const [appState, setAppState] = useState<AppState>('pre-analysis');
-  const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
-  const [preAnalysisResult, setPreAnalysisResult] = useState<PreAnalysisResult | null>(null);
-  const [currentFile, setCurrentFile] = useState<File | null>(null);
-  const [error, setError] = useState<AppError | null>(null);
+const App: React.FC = () => {
+  const [appState, setAppState] = useState<AppState>('PRE_ANALYSIS');
+  const [file, setFile] = useState<File | null>(null);
+  const [fileName, setFileName] = useState<string>('');
+  const [csvData, setCsvData] = useState<string>('');
+  const [dataProfile, setDataProfile] = useState<DataProfile | null>(null);
+  const [preAnalysis, setPreAnalysis] = useState<PreAnalysisResult | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [isProcessing, setIsProcessing] = useState<boolean>(false);
+  const [error, setError] = useState<{ title: string; message: string } | null>(null);
 
-  /**
-   * Step 1: Handles the file upload, extracting CSV from ZIP if necessary, then triggers pre-analysis.
-   */
-  const handlePreAnalysis = async (file: File) => {
-    setAppState('loading-pre-analysis');
-    setError(null);
+  const getHistoryKey = useCallback(() => `chatHistory_${fileName}`, [fileName]);
 
-    try {
-      let csvFile = file;
-
-      // Check if the file is a ZIP archive
-      if (file.type === 'application/zip' || file.type === 'application/x-zip-compressed' || file.name.endsWith('.zip')) {
-        const zip = await JSZip.loadAsync(file);
-        // Find the first valid CSV file, ignoring macOS metadata folders
-        const csvFiles = Object.keys(zip.files).filter(filename => 
-            !zip.files[filename].dir && 
-            filename.toLowerCase().endsWith('.csv') && 
-            !filename.startsWith('__MACOSX/')
-        );
-        
-        if (csvFiles.length === 0) {
-          throw new DataParsingError("Nenhum arquivo CSV encontrado no arquivo ZIP.", "Erro de Arquivo");
-        }
-
-        // Use the first CSV file found
-        const csvFileName = csvFiles[0];
-        const zipEntry = zip.file(csvFileName);
-        if (!zipEntry) {
-            throw new DataParsingError(`Não foi possível ler o arquivo ${csvFileName} do ZIP.`, "Erro de Arquivo");
-        }
-
-        const csvContent = await zipEntry.async('string');
-        csvFile = new File([csvContent], csvFileName.split('/').pop() || 'extracted.csv', { type: 'text/csv' });
-
-      } else if (file.type !== 'text/csv' && !file.name.toLowerCase().endsWith('.csv')) {
-          throw new DataParsingError("Tipo de arquivo inválido. Por favor, envie um arquivo CSV ou um ZIP contendo um CSV.", "Erro de Upload");
-      }
-
-      setCurrentFile(csvFile);
-      const result = await performPreAnalysis(csvFile);
-      setPreAnalysisResult(result);
-      setAppState('showing_suggestions');
-      
-    } catch (err) {
-      console.error(err);
-      let errorPayload: AppError;
-       if (err instanceof GeminiApiError) {
-        errorPayload = { title: "Erro de Comunicação com a IA", message: err.message };
-      } else if (err instanceof DataParsingError) {
-        errorPayload = { title: err.title || "Erro de Processamento", message: err.message };
-      } else if (err instanceof Error) {
-        errorPayload = { title: "Erro Inesperado", message: `Ocorreu um problema: ${err.message}`};
-      } else {
-        errorPayload = { title: "Erro Desconhecido", message: "Ocorreu um erro inesperado ao processar o arquivo. Tente novamente." };
-      }
-      setError(errorPayload);
-      setAppState('error');
+  useEffect(() => {
+    if (fileName && messages.length > 0) {
+      saveChatHistory(getHistoryKey(), messages);
     }
-  };
+  }, [messages, fileName, getHistoryKey]);
 
-
-  /**
-   * Step 2: Handles the selection of a question to start the full, in-depth analysis.
-   */
-  const handleStartAnalysis = async (question: string) => {
-    if (!currentFile) {
-      setError({ title: "Erro de Aplicação", message: "Nenhum arquivo encontrado para análise. Por favor, reinicie o processo." });
-      setAppState('error');
-      return;
+  const resetState = useCallback(() => {
+    if (fileName) {
+      removeChatHistory(getHistoryKey());
     }
-    setAppState('loading-analysis');
+    setAppState('PRE_ANALYSIS');
+    setFile(null);
+    setFileName('');
+    setCsvData('');
+    setDataProfile(null);
+    setPreAnalysis(null);
+    setMessages([]);
+    setIsProcessing(false);
     setError(null);
+  }, [fileName, getHistoryKey]);
+
+  const handleFileSelect = useCallback(async (selectedFile: File) => {
+    // Reset previous state before processing a new file
+    resetState();
+    setFileName(selectedFile.name);
+    setAppState('LOADING');
+    
     try {
-      // FIX: performInitialAnalysis now takes the file and the selected question.
-      const result = await performInitialAnalysis(currentFile, question);
-      setAnalysisResult(result);
-      setAppState('chat');
-    } catch (err) {
-      console.error(err);
-      let errorPayload: AppError;
-      if (err instanceof GeminiApiError) {
-        errorPayload = { title: "Erro de Comunicação com a IA", message: err.message };
-      } else if (err instanceof DataParsingError) {
-        errorPayload = { title: err.title || "Erro de Interpretação dos Dados", message: `A resposta da IA não pôde ser processada. ${err.message}` };
-      } else if (err instanceof Error) {
-        errorPayload = { title: "Erro Inesperado", message: `Ocorreu um problema: ${err.message}` };
-      } else {
-        errorPayload = { title: "Erro Desconhecido", message: "Ocorreu um erro inesperado ao analisar o arquivo. Tente novamente."};
+      const text = await selectedFile.text();
+      setCsvData(text);
+
+      const { profile } = profileData(text);
+      setDataProfile(profile);
+
+      const historyKey = `chatHistory_${selectedFile.name}`;
+      const savedHistory = getChatHistory(historyKey);
+      if (savedHistory && savedHistory.length > 0) {
+        setMessages(savedHistory);
+        setAppState('CHAT');
+        return;
       }
       
-      setError(errorPayload);
-      setAppState('error');
-    }
-  };
+      const sampleData = text.split('\n').slice(0, 20).join('\n');
+      const preAnalysisResult = await getPreAnalysis(profile, sampleData);
+      setPreAnalysis(preAnalysisResult);
+      setAppState('PRE_ANALYSIS');
+      // Set file *after* pre-analysis is done to show the pre-analysis view
+      setFile(selectedFile);
 
-  const handleReset = () => {
-    setAppState('pre-analysis');
-    setAnalysisResult(null);
-    setPreAnalysisResult(null);
-    setCurrentFile(null);
-    setError(null);
-  };
+    } catch (e: any) {
+      console.error(e);
+      setError({
+        title: e.title || 'Erro ao Processar Arquivo',
+        message: e.message || 'Houve um problema ao ler ou analisar seu arquivo. Verifique se é um CSV válido e tente novamente.',
+      });
+      setAppState('ERROR');
+    }
+  }, [resetState]);
+
+  const handleSendMessage = useCallback(async (question: string) => {
+    const userMessage: ChatMessage = {
+      id: `${Date.now()}-user-${Math.random()}`,
+      sender: 'user',
+      content: { text: question },
+    };
+    
+    const currentMessages = messages.filter(m => !m.isTyping);
+    setMessages([...currentMessages, userMessage]);
+    setAppState('CHAT');
+    setIsProcessing(true);
+
+    const agentTypingMessage: ChatMessage = {
+      id: `${Date.now()}-agent-${Math.random()}`,
+      sender: 'agent',
+      content: { text: '' },
+      isTyping: true,
+    };
+    setMessages(prev => [...prev, agentTypingMessage]);
+
+    try {
+      // FIX: Explicitly type `chatHistoryForApi` to prevent the compiler from widening the `role` property to `string`.
+      // This ensures it matches the type expected by the `getAnalysis` function.
+      const chatHistoryForApi: { role: 'user' | 'model'; parts: { text: string }[] }[] = [...currentMessages, userMessage]
+        .map(msg => ({
+          role: msg.sender === 'user' ? 'user' : 'model',
+          parts: [{ text: msg.content.text + (msg.content.analysisResult ? JSON.stringify(msg.content.analysisResult) : '') }]
+        }));
+
+      const dataSample = csvData.split('\n').slice(0, 200).join('\n');
+
+      const analysisResult = await getAnalysis(dataProfile!, dataSample, question, chatHistoryForApi);
+
+      const agentResponseMessage: ChatMessage = {
+        id: agentTypingMessage.id,
+        sender: 'agent',
+        content: {
+          text: `Aqui está a análise para sua pergunta:`,
+          analysisResult: analysisResult,
+        },
+      };
+
+      setMessages(prev => prev.map(m => m.id === agentTypingMessage.id ? agentResponseMessage : m));
+
+    } catch (e: any) {
+      console.error(e);
+      const errorMessage: ChatMessage = {
+        id: agentTypingMessage.id,
+        sender: 'agent',
+        isError: true,
+        content: {
+            text: e.message || "Desculpe, não consegui processar sua solicitação. Por favor, tente novamente."
+        },
+      };
+      setMessages(prev => prev.map(m => m.id === agentTypingMessage.id ? errorMessage : m));
+    } finally {
+      setIsProcessing(false);
+    }
+  }, [messages, csvData, dataProfile]);
+
+  const handleDrillDown = useCallback((chartTitle: string, dataPoint: Record<string, any>) => {
+    const question = `Poderia me dar mais detalhes sobre este ponto de dados do gráfico "${chartTitle}"? Dados: ${JSON.stringify(dataPoint)}`;
+    handleSendMessage(question);
+  }, [handleSendMessage]);
 
   const renderContent = () => {
     switch (appState) {
-      case 'loading-pre-analysis':
-        return <LoadingIndicator text="Processando seu arquivo e iniciando a análise prévia..." />;
-      case 'loading-analysis':
-        return <LoadingIndicator text="Analisando seu conjunto de dados... Isso pode levar um momento." />;
-      case 'showing_suggestions':
+      case 'LOADING':
+        return <LoadingIndicator text="Analisando seu arquivo..." />;
+      case 'ERROR':
+        return <ErrorDisplay title={error!.title} message={error!.message} onRetry={resetState} />;
+      case 'CHAT':
         return (
-          <PreAnalysisView
-            preAnalysis={preAnalysisResult!}
-            onQuestionSelect={handleStartAnalysis}
-            fileName={currentFile!.name}
+          <ChatInterface 
+            messages={messages}
+            dataProfile={dataProfile!}
+            fileName={fileName}
+            onSendMessage={handleSendMessage}
+            onDrillDown={handleDrillDown}
+            onReset={resetState}
+            isProcessing={isProcessing}
           />
         );
-      case 'chat':
-        if (analysisResult && currentFile) {
-          return <ChatInterface initialAnalysis={analysisResult} file={currentFile} onReset={handleReset} />;
-        }
-        // Fallback to error if data is missing
-        setError({ title: "Erro de Estado da Aplicação", message: "Ocorreu um erro inesperado. Faltam dados da análise para iniciar o chat."});
-        setAppState('error');
-        return null; // The component will re-render into the error state
-      case 'error':
-        return (
-          <ErrorDisplay 
-            title={error?.title || "Falha no Processamento"}
-            message={error?.message || "Ocorreu um erro desconhecido."}
-            onRetry={handleReset}
-          />
-        );
-      case 'pre-analysis':
+      case 'PRE_ANALYSIS':
       default:
-        return <PreAnalysisView onFileSelect={handlePreAnalysis} />;
+        return (
+          <PreAnalysisView 
+            onFileSelect={file ? undefined : handleFileSelect}
+            preAnalysis={preAnalysis!}
+            onQuestionSelect={handleSendMessage}
+            fileName={fileName}
+          />
+        );
     }
   };
 
   return (
-    <div className="flex flex-col h-screen bg-gray-900 text-gray-200 font-sans">
+    <div className="bg-gray-900 text-gray-200 font-sans h-screen flex flex-col">
       <Header />
-      <main className="flex-1 overflow-hidden p-4 md:p-8">
-        <div className="h-full max-w-7xl mx-auto flex flex-col items-center justify-center">
-            {renderContent()}
+      <main className="flex-1 flex flex-col items-center justify-center p-4 overflow-hidden">
+        <div className="w-full h-full max-w-7xl mx-auto flex flex-col">
+          {renderContent()}
         </div>
       </main>
     </div>
   );
-}
+};
 
 export default App;
